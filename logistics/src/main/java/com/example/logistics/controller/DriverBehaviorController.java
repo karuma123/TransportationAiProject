@@ -9,6 +9,7 @@ import java.util.List;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.CrossOrigin;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -19,6 +20,7 @@ import org.springframework.web.multipart.MultipartFile;
 import com.example.logistics.entity.DriverBehavior;
 import com.example.logistics.service.DriverBehaviorService;
 
+@CrossOrigin(origins = "http://localhost:3000")
 @RestController
 @RequestMapping("/api/drivers")
 public class DriverBehaviorController {
@@ -114,15 +116,22 @@ service.save(driver);
 
         // ✅ END ADDITION
 
-        DriverBehavior result =
-                service.processGpsTrajectory(
-                        driverId,
-                        filePath.toAbsolutePath()
-                                .toString()
-                                .replace("\\", "/")
-                );
+       // AFTER saving file + validations + DB save
 
-        return ResponseEntity.ok(result);
+// ✅ FIX STARTS HERE
+String absolutePath = filePath.toFile().getAbsolutePath();
+
+System.out.println("File saved at: " + absolutePath);
+
+if (!new File(absolutePath).exists()) {
+    throw new RuntimeException("File not found at: " + absolutePath);
+}
+
+DriverBehavior result =
+        service.processGpsTrajectory(driverId, absolutePath);
+// ✅ FIX ENDS HERE
+
+return ResponseEntity.ok(result);
 
     } catch (Exception e) {
         e.printStackTrace();
