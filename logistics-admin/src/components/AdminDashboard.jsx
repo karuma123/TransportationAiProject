@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import "../styles/dashboard.css";
 import { useNavigate } from "react-router-dom";
+import { getDashboardStats } from "../api/realtimeApi";
 import { Pie, Bar } from "react-chartjs-2";
 import {
   Chart as ChartJS,
@@ -25,36 +26,107 @@ const AdminDashboard = () => {
     mediumRisk: 0,
     lowRisk: 0,
   });
+  const [realtimeRows, setRealtimeRows] = useState([]);
+  const [driverRows, setDriverRows] = useState([]);
   const [tableData, setTableData] = useState(null);
   const [showSummary, setShowSummary] = useState(true);
 
   useEffect(() => {
     loadStats();
+    const timer = setInterval(loadStats, 4000);
+    return () => clearInterval(timer);
   }, []);
 
   const loadStats = async () => {
     try {
-      const driversRes = await axios.get("http://localhost:8080/api/drivers");
-      const flaggedRes = await axios.get("http://localhost:8080/api/drivers/flagged");
-      const drivers = driversRes.data;
+      const [realtime, driversRes, flaggedRes] = await Promise.all([
+        getDashboardStats(),
+        axios.get("http://localhost:8080/api/drivers"),
+        axios.get("http://localhost:8080/api/drivers/flagged"),
+      ]);
+
+      const drivers = Array.isArray(driversRes.data) ? driversRes.data : [];
+      const flagged = Array.isArray(flaggedRes.data) ? flaggedRes.data : [];
+      const latestPositions = Array.isArray(realtime?.latestPositions)
+        ? realtime.latestPositions
+        : [];
+      const recentAnomalies = Array.isArray(realtime?.recentAnomalies)
+        ? realtime.recentAnomalies
+        : [];
+      const riskDist = realtime?.riskDistribution || {
+        high: 0,
+        medium: 0,
+        low: 0,
+      };
+
+      const normalizedRealtimeRows = latestPositions.map((pos) => {
+        const event = recentAnomalies.find((a) => a.vehicleId === pos.vehicleId);
+        return {
+          driverId: pos.driverId || pos.vehicleId,
+          vehicleId: pos.vehicleId,
+          riskLevel: event?.riskLevel || "LOW",
+          blocked: false,
+          totalDeliveries: 0,
+          cancellations: 0,
+          speed: pos.speed || 0,
+          latitude: pos.latitude,
+          longitude: pos.longitude,
+          source: "realtime",
+        };
+      });
+
+      const normalizedDriverRows = drivers.map((d) => ({
+        driverId: d.driverId,
+        vehicleId: null,
+        riskLevel: d.riskLevel || "LOW",
+        blocked: Boolean(d.blocked),
+        totalDeliveries: d.totalDeliveries || 0,
+        cancellations: d.cancellations || 0,
+        source: "upload",
+      }));
+
+      const effectiveRows = normalizedDriverRows.length > 0
+        ? normalizedDriverRows
+        : normalizedRealtimeRows;
+
+      setDriverRows(normalizedDriverRows);
+      setRealtimeRows(normalizedRealtimeRows);
 
       setStats({
-        total: drivers.length,
-        blocked: drivers.filter((d) => d.blocked).length,
-        flagged: flaggedRes.data.length,
-        highRisk: drivers.filter((d) => d.riskLevel === "HIGH").length,
-        mediumRisk: drivers.filter((d) => d.riskLevel === "MEDIUM").length,
-        lowRisk: drivers.filter((d) => d.riskLevel === "LOW").length,
+        total: effectiveRows.length,
+        blocked: normalizedDriverRows.filter((d) => d.blocked).length,
+        flagged: flagged.length > 0 ? flagged.length : (realtime?.activeAlerts || 0),
+        highRisk: riskDist.high || effectiveRows.filter((d) => d.riskLevel === "HIGH").length,
+        mediumRisk: riskDist.medium || effectiveRows.filter((d) => d.riskLevel === "MEDIUM").length,
+        lowRisk: riskDist.low || effectiveRows.filter((d) => d.riskLevel === "LOW").length,
       });
+
+      if (tableData === null) {
+        setTableData(effectiveRows);
+      }
     } catch (err) {
       console.error("Dashboard load failed", err);
     }
   };
 
-  const showTable = async (filter) => {
+  const showTable = (filter) => {
     try {
-      const res = await axios.get(`http://localhost:8080/api/drivers?risk=${filter}`);
-      setTableData(res.data);
+      const baseRows = driverRows.length > 0 ? driverRows : realtimeRows;
+
+      if (filter === "ALL") {
+        setTableData(baseRows);
+        return;
+      }
+      if (filter === "BLOCKED") {
+        setTableData(baseRows.filter((d) => d.blocked));
+        return;
+      }
+      if (filter === "FLAGGED") {
+        setTableData(baseRows.filter((d) => d.riskLevel !== "LOW"));
+        return;
+      }
+
+      setTableData(baseRows.filter((d) => d.riskLevel === filter));
     } catch (err) {
       console.error("Table load failed", err);
     }
@@ -81,6 +153,9 @@ const AdminDashboard = () => {
     ],
   };
  const handleBlockToggle = (driverId, isBlocked) => {
+  if (driverRows.length === 0) {
+    return;
+  }
   console.log("Admin action:", driverId, isBlocked ? "Unblock" : "Block");
 
   setTableData((prev) =>
@@ -183,9 +258,10 @@ const AdminDashboard = () => {
                      <td>
         <button
           className={`block-btn ${driver.blocked ? "unblock" : "block"}`}
+          disabled={driver.source !== "upload"}
           onClick={() => handleBlockToggle(driver.driverId, driver.blocked)}
         >
-          {driver.blocked ? "Unblock" : "Block"}
+          {driver.source !== "upload" ? "Live" : (driver.blocked ? "Unblock" : "Block")}
         </button>
       </td>
                   </tr>
