@@ -11,6 +11,10 @@ public interface AnomalyEventRepository extends JpaRepository<AnomalyEvent, Long
 
     List<AnomalyEvent> findByAcknowledgedFalseOrderByDetectedAtDesc();
 
+    long countByAcknowledgedFalse();
+
+    long countByRiskLevel(String riskLevel);
+
     List<AnomalyEvent> findByVehicleIdOrderByDetectedAtDesc(int vehicleId);
 
     List<AnomalyEvent> findTop50ByOrderByDetectedAtDesc();

@@ -200,6 +200,7 @@ public class RideService {
 
     public Ride completeRide(Long rideId, String dropPin) {
         Ride ride = getRideOrThrow(rideId);
+        boolean wasAlreadyDelivered = "DELIVERED".equalsIgnoreCase(ride.getPackageStatus());
         if (ride.getStatus() != RideStatus.IN_PROGRESS) {
             throw new RuntimeException("Only in-progress rides can be completed");
         }
@@ -218,12 +219,15 @@ public class RideService {
         ride.setCurrentPackageLat(ride.getDropLat());
         ride.setCurrentPackageLng(ride.getDropLng());
         Ride saved = rideRepository.save(ride);
-        incrementDeliveriesForDriver(saved.getDriverId());
+        if (!wasAlreadyDelivered) {
+            incrementDeliveriesForDriver(saved.getDriverId());
+        }
         return saved;
     }
 
     public Ride cancelRide(Long rideId, String reason) {
         Ride ride = getRideOrThrow(rideId);
+        boolean wasAlreadyCancelled = "CANCELLED".equalsIgnoreCase(ride.getPackageStatus());
         if (ride.getStatus() == RideStatus.COMPLETED || ride.getStatus() == RideStatus.CANCELLED) {
             throw new RuntimeException("Ride is already finalized");
         }
@@ -250,7 +254,9 @@ public class RideService {
         }
 
         Ride saved = rideRepository.save(ride);
-        incrementCancellationsForDriver(saved.getDriverId());
+        if (!wasAlreadyCancelled) {
+            incrementCancellationsForDriver(saved.getDriverId());
+        }
         return saved;
     }
 
@@ -318,11 +324,17 @@ public class RideService {
                 filtered.add(s);
             }
         }
+        // If language/script differences (e.g., Telugu vs English) prevent text matching,
+        // return active schedules so the customer can still choose a route manually.
+        if (filtered.isEmpty()) {
+            return schedules;
+        }
         return filtered;
     }
 
     public Ride updateShipmentStage(Long rideId, String stage, String note) {
         Ride ride = getRideOrThrow(rideId);
+        String previousPackageStatus = ride.getPackageStatus();
         String normalized = normalizeStage(stage, ride.getStatus());
         ride.setShipmentStage(normalized);
         ride.setShipmentUpdateNote(
@@ -340,8 +352,14 @@ public class RideService {
             ride.setPackageStatus("DELIVERED");
             ride.setCurrentPackageLat(ride.getDropLat());
             ride.setCurrentPackageLng(ride.getDropLng());
+            if (!"DELIVERED".equalsIgnoreCase(previousPackageStatus)) {
+                incrementDeliveriesForDriver(ride.getDriverId());
+            }
         } else if ("CANCELLED".equals(normalized)) {
             ride.setPackageStatus("CANCELLED");
+            if (!"CANCELLED".equalsIgnoreCase(previousPackageStatus)) {
+                incrementCancellationsForDriver(ride.getDriverId());
+            }
         }
 
         return rideRepository.save(ride);

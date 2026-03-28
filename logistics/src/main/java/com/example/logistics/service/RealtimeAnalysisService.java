@@ -118,6 +118,23 @@ public class RealtimeAnalysisService {
             } catch (Exception e) {
                 logger.error("ML analysis failed for vehicle {}: {}", vehicleId, e.getMessage());
                 response.put("analysisError", e.getMessage());
+
+        boolean hasSimulatorAnomaly = buffer.stream()
+            .anyMatch(p -> Boolean.TRUE.equals(p.get("anomalous")));
+        if (hasSimulatorAnomaly) {
+            String fallbackType = deriveDominantAnomalyType(
+                buffer,
+                resolveFallbackAnomalyType(vehicleId, gpsPoint.getAnomalyType())
+            );
+            AnomalyEvent fallbackEvent = createFallbackEvent(gpsPoint, fallbackType);
+            response.put("fallbackAnomalyEvent", Map.of(
+                "id", fallbackEvent.getId(),
+                "riskLevel", fallbackEvent.getRiskLevel(),
+                "anomalyScore", fallbackEvent.getAnomalyScore(),
+                "source", "SIMULATOR_FALLBACK"
+            ));
+            logger.warn("⚠️ ML unavailable, created fallback anomaly event for vehicle {}", vehicleId);
+        }
             }
 
             // Clear buffer after analysis
@@ -174,16 +191,17 @@ public class RealtimeAnalysisService {
     public Map<String, Object> getDashboardStats() {
         List<GpsPoint> latestPositions = getLatestPositions();
         List<AnomalyEvent> recentAnomalies = getRecentAnomalies();
-        List<AnomalyEvent> activeAlerts = getActiveAlerts();
+        long totalAnomalies = anomalyEventRepository.count();
+        long activeAlerts = anomalyEventRepository.countByAcknowledgedFalse();
 
-        long highRisk = recentAnomalies.stream().filter(e -> "HIGH".equals(e.getRiskLevel())).count();
-        long mediumRisk = recentAnomalies.stream().filter(e -> "MEDIUM".equals(e.getRiskLevel())).count();
-        long lowRisk = recentAnomalies.stream().filter(e -> "LOW".equals(e.getRiskLevel())).count();
+        long highRisk = anomalyEventRepository.countByRiskLevel("HIGH");
+        long mediumRisk = anomalyEventRepository.countByRiskLevel("MEDIUM");
+        long lowRisk = anomalyEventRepository.countByRiskLevel("LOW");
 
         Map<String, Object> stats = new HashMap<>();
         stats.put("activeVehicles", latestPositions.size());
-        stats.put("totalAnomalies", recentAnomalies.size());
-        stats.put("activeAlerts", activeAlerts.size());
+        stats.put("totalAnomalies", totalAnomalies);
+        stats.put("activeAlerts", activeAlerts);
         stats.put("riskDistribution", Map.of(
             "high", highRisk,
             "medium", mediumRisk,
@@ -326,5 +344,31 @@ public class RealtimeAnalysisService {
         }
 
         return "UNKNOWN";
+    }
+
+    private AnomalyEvent createFallbackEvent(GpsPoint gpsPoint, String anomalyType) {
+        AnomalyEvent event = new AnomalyEvent();
+        event.setVehicleId(gpsPoint.getVehicleId());
+        event.setDriverId(gpsPoint.getDriverId());
+        event.setLatitude(gpsPoint.getLatitude());
+        event.setLongitude(gpsPoint.getLongitude());
+
+        double fallbackScore;
+        if ("SPEEDING".equalsIgnoreCase(anomalyType)) {
+            fallbackScore = 0.90;
+        } else if ("ERRATIC".equalsIgnoreCase(anomalyType)) {
+            fallbackScore = 0.72;
+        } else if ("IDLE".equalsIgnoreCase(anomalyType)) {
+            fallbackScore = 0.48;
+        } else {
+            fallbackScore = 0.60;
+        }
+
+        event.setAnomalyScore(fallbackScore);
+        event.setAnomalyProbability(Math.min(0.99, fallbackScore));
+        event.setAnomalyType(anomalyType == null || anomalyType.isBlank() ? "UNKNOWN" : anomalyType);
+        event.setRiskLevel(deriveRiskLevel(event.getAnomalyScore(), event.getAnomalyType()));
+
+        return anomalyEventRepository.save(event);
     }
 }

@@ -17,7 +17,7 @@ import random
 import json
 import argparse
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
@@ -127,7 +127,8 @@ class Vehicle:
             )
 
         # Build data point
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
+        timestamp_utc = now.isoformat().replace("+00:00", "Z")
         point = {
             "vehicleId": self.vehicle_id,
             "driverId": self.driver_id,
@@ -136,7 +137,7 @@ class Vehicle:
             "altitude": round(self.altitude, 1),
             "speed": round(self.speed_kmh, 2),
             "heading": round(self.heading % 360, 2),
-            "timestamp": now.isoformat() + "Z",
+            "timestamp": timestamp_utc,
             "anomalous": self.is_anomalous,
             "anomalyType": self.anomaly_type,
         }
@@ -158,16 +159,18 @@ class Vehicle:
 # ============================================================
 # SENDER
 # ============================================================
-def send_point(point: dict) -> bool:
+def send_point(point: dict):
     """Send a single GPS data point to the backend."""
     try:
         resp = requests.post(BACKEND_URL, json=point, timeout=5)
-        return resp.status_code == 200
+        if resp.status_code == 200:
+            return True, "OK"
+        body = (resp.text or "").strip().replace("\n", " ")
+        return False, f"HTTP {resp.status_code}: {body[:140]}"
     except requests.exceptions.ConnectionError:
-        return False
+        return False, "Connection refused"
     except Exception as e:
-        print(f"  [!] Error sending: {e}")
-        return False
+        return False, str(e)
 
 
 # ============================================================
@@ -199,7 +202,7 @@ def run_simulation(num_vehicles: int, interval: float, anomaly_rate: float):
 
         for v in vehicles:
             point = v.tick(interval, anomaly_rate)
-            ok = send_point(point)
+            ok, detail = send_point(point)
 
             if ok:
                 success_count += 1
@@ -209,6 +212,8 @@ def run_simulation(num_vehicles: int, interval: float, anomaly_rate: float):
             else:
                 fail_count += 1
                 connected = False
+                if tick <= 3:
+                    print(f"  [!] Send failed for vehicle {v.vehicle_id}: {detail}")
 
             if point["anomalous"]:
                 anomaly_count += 1
