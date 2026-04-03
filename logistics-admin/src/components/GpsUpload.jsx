@@ -2,6 +2,7 @@ import React, { useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import "../styles/GpsUpload.css";
+import { API_DRIVERS_URL } from "../config";
 
 const GpsUpload = () => {
   const navigate = useNavigate();
@@ -24,7 +25,7 @@ const GpsUpload = () => {
     try {
       setLoading(true);
       const res = await axios.post(
-        "http://localhost:8080/api/drivers/gps/upload",
+        `${API_DRIVERS_URL}/gps/upload`,
         formData
       );
       setAnalysis(res.data);
@@ -129,7 +130,7 @@ const GpsUpload = () => {
     try {
       setLoading(true);
       const res = await axios.post(
-        "http://localhost:8080/api/drivers/gps/upload",
+        `${API_DRIVERS_URL}/gps/upload`,
         formData
       );
       setAnalysis(res.data);

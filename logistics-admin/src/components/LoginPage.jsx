@@ -3,8 +3,9 @@ import axios from "axios";
 import { Link, useNavigate } from "react-router-dom";
 import { saveSession } from "../utils/session";
 import "../styles/auth-pages.css";
+import { API_BASE_URL } from "../config";
 
-const API = "http://localhost:8080/api";
+const API = API_BASE_URL;
 
 const readError = (error, fallback) => (
   error?.response?.data?.message

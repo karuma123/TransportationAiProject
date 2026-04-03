@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: logistics-backend
+    env: java
+    plan: free
+    rootDir: logistics
+    buildCommand: chmod +x ./mvnw && ./mvnw clean package -DskipTests
+    startCommand: java -Dserver.port=$PORT -jar target/*.jar
+    envVars:
+      - key: SPRING_DATASOURCE_URL
+        sync: false
+      - key: SPRING_DATASOURCE_USERNAME
+        sync: false
+      - key: SPRING_DATASOURCE_PASSWORD
+        sync: false
+      - key: SPRING_JPA_HIBERNATE_DDL_AUTO
+        value: update
+      - key: ML_PREDICT_URL
+        value: https://logistics-ml-service.onrender.com/predict
+      - key: ML_REALTIME_URL
+        value: https://logistics-ml-service.onrender.com/predict/realtime
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://logistics-frontend.onrender.com,http://localhost:3000
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+
+  - type: web
+    name: logistics-ml-service
+    env: python
+    plan: free
+    rootDir: ml-service
+    buildCommand: pip install -r requirements.txt
+    startCommand: python app.py
+
+  - type: web
+    name: logistics-frontend
+    env: static
+    plan: free
+    rootDir: logistics-admin
+    buildCommand: npm ci && npm run build
+    staticPublishPath: build
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: REACT_APP_API_BASE_URL
+        value: https://logistics-backend.onrender.com/api

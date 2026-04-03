@@ -6,8 +6,9 @@ import "leaflet/dist/leaflet.css";
 import "../styles/role-dashboards.css";
 import { clearSession, getAuthHeaders, getSession } from "../utils/session";
 import { useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../config";
 
-const API = "http://localhost:8080/api";
+const API = API_BASE_URL;
 const defaultPickup = { lat: 17.385, lng: 78.4867, label: "Hyderabad Center" };
 const defaultDrop = { lat: 17.43, lng: 78.39, label: "Delivery Destination" };
 const fmtDate = (value) => (value ? new Date(value).toLocaleString() : "-");

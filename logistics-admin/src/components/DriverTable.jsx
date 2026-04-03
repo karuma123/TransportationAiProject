@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { blockDriver, unblockDriver } from "../api/driverApi";
 import "../styles/driverTable.css";
+import { API_DRIVERS_URL } from "../config";
 
 const DriverTable = () => {
   const [drivers, setDrivers] = useState([]);
@@ -11,7 +12,7 @@ const DriverTable = () => {
   }, []);
 
   const fetchDrivers = async () => {
-    const res = await axios.get("http://localhost:8080/api/drivers");
+    const res = await axios.get(API_DRIVERS_URL);
     setDrivers(res.data);
   };
 
@@ -19,13 +20,13 @@ const DriverTable = () => {
     try {
       if (driver.blocked) {
         await axios.post(
-          "http://localhost:8080/api/drivers/unblock",
+          `${API_DRIVERS_URL}/unblock`,
           null,
           { params: { driverId: driver.driverId } }
         );
       } else {
         await axios.post(
-          "http://localhost:8080/api/drivers/block",
+          `${API_DRIVERS_URL}/block`,
           null,
           {
             params: {

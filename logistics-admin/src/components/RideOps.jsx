@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import "../styles/ride-ops.css";
+import { API_BASE_URL } from "../config";
 
-const API = "http://localhost:8080/api";
+const API = API_BASE_URL;
 
 const extractErrorMessage = (error, fallback) => {
   return (

@@ -1,7 +1,8 @@
 import axios from "axios";
+import { API_BASE_URL } from "../config";
 
 const api = axios.create({
-  baseURL: "http://localhost:8080/api", // Spring Boot base URL
+  baseURL: API_BASE_URL,
 });
 
 // Add response interceptor for debugging

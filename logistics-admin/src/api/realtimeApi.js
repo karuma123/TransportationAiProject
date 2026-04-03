@@ -1,6 +1,7 @@
 import axios from "axios";
+import { API_REALTIME_URL } from "../config";
 
-const API_BASE = "http://localhost:8080/api/realtime";
+const API_BASE = API_REALTIME_URL;
 
 /**
  * Send a GPS data point to the backend.

@@ -14,6 +14,7 @@ import {
 import "../styles/role-dashboards.css";
 import { getDashboardStats } from "../api/realtimeApi";
 import { clearSession } from "../utils/session";
+import { API_DRIVERS_URL } from "../config";
 
 ChartJS.register(ArcElement, BarElement, CategoryScale, LinearScale, Tooltip, Legend);
 
@@ -45,8 +46,8 @@ const AdminDashboard = () => {
     try {
       const [realtime, driversRes, flaggedRes] = await Promise.all([
         getDashboardStats(),
-        axios.get("http://localhost:8080/api/drivers"),
-        axios.get("http://localhost:8080/api/drivers/flagged"),
+        axios.get(API_DRIVERS_URL),
+        axios.get(`${API_DRIVERS_URL}/flagged`),
       ]);
 
       const drivers = Array.isArray(driversRes.data) ? driversRes.data : [];

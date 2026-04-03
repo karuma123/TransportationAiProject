@@ -2,8 +2,9 @@ import React, { useEffect, useRef, useState } from "react";
 import axios from "axios";
 import { Link } from "react-router-dom";
 import "../styles/auth-pages.css";
+import { API_BASE_URL } from "../config";
 
-const API = "http://localhost:8080/api";
+const API = API_BASE_URL;
 
 const readError = (error, fallback) => (
   error?.response?.data?.message

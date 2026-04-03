@@ -1,6 +1,7 @@
 import axios from "axios";
+import { API_DRIVERS_URL } from "../config";
 
-const BASE_URL = "http://localhost:8080/api/drivers";
+const BASE_URL = API_DRIVERS_URL;
 
 export const fetchDrivers = () =>
   axios.get(BASE_URL);

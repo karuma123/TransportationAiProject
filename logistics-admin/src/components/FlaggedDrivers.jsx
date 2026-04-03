@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from "react";
+import { API_DRIVERS_URL } from "../config";
 
 function FlaggedDrivers() {
   const [drivers, setDrivers] = useState([]);
 
   useEffect(() => {
-    fetch("http://localhost:8080/api/drivers/flagged")
+    fetch(`${API_DRIVERS_URL}/flagged`)
       .then(res => res.json())
       .then(data => {
         console.log("FLAGGED DRIVERS:", data);

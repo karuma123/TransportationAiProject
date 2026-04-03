@@ -6,8 +6,9 @@ import "leaflet/dist/leaflet.css";
 import "../styles/role-dashboards.css";
 import { clearSession, getAuthHeaders, getSession } from "../utils/session";
 import { useNavigate } from "react-router-dom";
+import { API_BASE_URL } from "../config";
 
-const API = "http://localhost:8080/api";
+const API = API_BASE_URL;
 const fmtDate = (value) => (value ? new Date(value).toLocaleString() : "-");
 
 const fetchLocationSuggestions = async (query) => {
