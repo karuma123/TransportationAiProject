@@ -4,6 +4,7 @@ import com.example.logistics.entity.AnomalyEvent;
 import com.example.logistics.entity.GpsPoint;
 import com.example.logistics.repository.AnomalyEventRepository;
 import com.example.logistics.repository.GpsPointRepository;
+import org.springframework.beans.factory.annotation.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.*;
@@ -27,7 +28,9 @@ public class RealtimeAnalysisService {
     private final Map<Integer, List<Map<String, Object>>> vehiclePointBuffers = new ConcurrentHashMap<>();
     private final Map<Integer, String> vehicleLastAnomalyType = new ConcurrentHashMap<>();
     private static final int ANALYSIS_WINDOW_SIZE = 15; // Analyze every 15 points
-    private static final String ML_REALTIME_URL = "http://localhost:5001/predict/realtime";
+
+    @Value("${ML_REALTIME_URL:http://localhost:5001/predict/realtime}")
+    private String mlRealtimeUrl;
 
     public RealtimeAnalysisService(GpsPointRepository gpsPointRepository,
                                     AnomalyEventRepository anomalyEventRepository) {
@@ -155,7 +158,7 @@ public class RealtimeAnalysisService {
         Map<String, Object> body = Map.of("points", points);
         HttpEntity<Map<String, Object>> request = new HttpEntity<>(body, headers);
 
-        ResponseEntity<Map> response = restTemplate.postForEntity(ML_REALTIME_URL, request, Map.class);
+        ResponseEntity<Map> response = restTemplate.postForEntity(mlRealtimeUrl, request, Map.class);
 
         if (response.getBody() == null) {
             throw new RuntimeException("Empty response from ML service");

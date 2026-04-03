@@ -27,6 +27,18 @@ public class AppUser {
     @Column(nullable = false)
     private String fullName;
 
+    @Column(length = 20)
+    private String mobileNumber;
+
+    @Column(columnDefinition = "TEXT")
+    private String address;
+
+    @Column(columnDefinition = "TEXT")
+    private String idProofImage;
+
+    @Column(columnDefinition = "TEXT")
+    private String profileImage;
+
     public Long getId() {
         return id;
     }
@@ -65,5 +77,37 @@ public class AppUser {
 
     public void setFullName(String fullName) {
         this.fullName = fullName;
+    }
+
+    public String getMobileNumber() {
+        return mobileNumber;
+    }
+
+    public void setMobileNumber(String mobileNumber) {
+        this.mobileNumber = mobileNumber;
+    }
+
+    public String getAddress() {
+        return address;
+    }
+
+    public void setAddress(String address) {
+        this.address = address;
+    }
+
+    public String getIdProofImage() {
+        return idProofImage;
+    }
+
+    public void setIdProofImage(String idProofImage) {
+        this.idProofImage = idProofImage;
+    }
+
+    public String getProfileImage() {
+        return profileImage;
+    }
+
+    public void setProfileImage(String profileImage) {
+        this.profileImage = profileImage;
     }
 }

@@ -78,4 +78,5 @@ if __name__ == "__main__":
     print("    POST /predict/realtime — real-time prediction")
     print("    GET  /health           — health check")
     print("=" * 50)
-    app.run(port=5001, debug=True)
+    port = int(os.environ.get("PORT", "5001"))
+    app.run(host="0.0.0.0", port=port, debug=False)

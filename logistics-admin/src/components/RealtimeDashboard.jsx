@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { getDashboardStats, getRecentAnomalies } from "../api/realtimeApi";
-import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
+import { MapContainer, Marker, Polyline, Popup, TileLayer } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "../styles/realtime-dashboard.css";
@@ -17,6 +17,7 @@ L.Icon.Default.mergeOptions({
 const RealtimeDashboard = () => {
     const [stats, setStats] = useState(null);
     const [anomalies, setAnomalies] = useState([]);
+    const [positionHistory, setPositionHistory] = useState({});
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [lastUpdate, setLastUpdate] = useState(null);
@@ -29,6 +30,26 @@ const RealtimeDashboard = () => {
             ]);
             setStats(dashData);
             setAnomalies(anomalyData);
+            setPositionHistory((prev) => {
+                const next = { ...prev };
+                const positions = Array.isArray(dashData?.latestPositions) ? dashData.latestPositions : [];
+
+                positions.forEach((pos) => {
+                    if (pos?.vehicleId == null || pos?.latitude == null || pos?.longitude == null) return;
+
+                    const vehicleId = String(pos.vehicleId);
+                    const point = [pos.latitude, pos.longitude];
+                    const existing = next[vehicleId] || [];
+                    const last = existing[existing.length - 1];
+
+                    // Keep a short trail only when location actually changes.
+                    if (!last || last[0] !== point[0] || last[1] !== point[1]) {
+                        next[vehicleId] = [...existing, point].slice(-12);
+                    }
+                });
+
+                return next;
+            });
             setLastUpdate(new Date());
             setError(null);
         } catch (err) {
@@ -184,7 +205,11 @@ const RealtimeDashboard = () => {
                                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                             />
                             {positions.map((pos) => (
-                                <Marker key={`map-${pos.vehicleId}`} position={[pos.latitude, pos.longitude]}>
+                                <React.Fragment key={`map-${pos.vehicleId}`}>
+                                {Array.isArray(positionHistory[String(pos.vehicleId)]) && positionHistory[String(pos.vehicleId)].length > 1 && (
+                                    <Polyline positions={positionHistory[String(pos.vehicleId)]} pathOptions={{ color: "#2563eb", weight: 3, opacity: 0.7 }} />
+                                )}
+                                <Marker key={`map-${pos.vehicleId}-${pos.timestamp || "ts"}`} position={[pos.latitude, pos.longitude]}>
                                     <Popup>
                                         <strong>Vehicle #{pos.vehicleId}</strong>
                                         <br />
@@ -195,6 +220,7 @@ const RealtimeDashboard = () => {
                                         {pos.latitude?.toFixed(5)}, {pos.longitude?.toFixed(5)}
                                     </Popup>
                                 </Marker>
+                                </React.Fragment>
                             ))}
                         </MapContainer>
                     </div>

@@ -10,7 +10,14 @@ export const getSession = () => {
 };
 
 export const saveSession = (session) => {
-  localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  try {
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+  } catch {
+    const slim = { ...session };
+    delete slim.idProofImage;
+    delete slim.profileImage;
+    localStorage.setItem(SESSION_KEY, JSON.stringify(slim));
+  }
 };
 
 export const clearSession = () => {

@@ -36,6 +36,24 @@ public class AuthService {
         }
 
         String username = request.getUsername().trim();
+        String role = normalizeRole(request.getRole());
+
+        if (("CUSTOMER".equals(role) || "DRIVER".equals(role))
+                && (request.getMobileNumber() == null || request.getMobileNumber().isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Mobile number is required");
+        }
+        if (("CUSTOMER".equals(role) || "DRIVER".equals(role))
+                && (request.getAddress() == null || request.getAddress().isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Address is required");
+        }
+        if (("CUSTOMER".equals(role) || "DRIVER".equals(role))
+                && (request.getIdProofImage() == null || request.getIdProofImage().isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "ID proof image is required");
+        }
+        if (("CUSTOMER".equals(role) || "DRIVER".equals(role))
+                && (request.getProfileImage() == null || request.getProfileImage().isBlank())) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Profile image is required");
+        }
 
         appUserRepository.findByUsername(username)
                 .ifPresent(u -> {
@@ -50,15 +68,30 @@ public class AuthService {
                         ? request.getUsername().trim()
                         : request.getFullName().trim()
         );
-        user.setRole(normalizeRole(request.getRole()));
+        user.setRole(role);
+        user.setMobileNumber(
+            request.getMobileNumber() == null || request.getMobileNumber().isBlank()
+                ? null
+                : request.getMobileNumber().trim()
+        );
+        user.setAddress(
+            request.getAddress() == null || request.getAddress().isBlank()
+                ? null
+                : request.getAddress().trim()
+        );
+        user.setIdProofImage(
+            request.getIdProofImage() == null || request.getIdProofImage().isBlank()
+                ? null
+                : request.getIdProofImage().trim()
+        );
+        user.setProfileImage(
+            request.getProfileImage() == null || request.getProfileImage().isBlank()
+                ? null
+                : request.getProfileImage().trim()
+        );
         AppUser saved = appUserRepository.save(user);
 
-        Map<String, Object> result = new HashMap<>();
-        result.put("userId", saved.getId());
-        result.put("username", saved.getUsername());
-        result.put("fullName", saved.getFullName());
-        result.put("role", saved.getRole());
-        return result;
+        return toAuthResponse(saved, null);
     }
 
     public Map<String, Object> login(LoginRequest request) {
@@ -80,12 +113,38 @@ public class AuthService {
 
         String token = jwtService.generateToken(user.getId(), user.getUsername(), user.getRole());
 
+        return toAuthResponse(user, token);
+    }
+
+    public Map<String, Object> profile(String username) {
+        AppUser user = appUserRepository.findByUsername(username)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+        return toAuthResponse(user, null);
+    }
+
+    public Map<String, Object> profileImages(String username) {
+        AppUser user = appUserRepository.findByUsername(username)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
         Map<String, Object> result = new HashMap<>();
-        result.put("token", token);
+        result.put("idProofImage", user.getIdProofImage());
+        result.put("profileImage", user.getProfileImage());
+        return result;
+    }
+
+    private Map<String, Object> toAuthResponse(AppUser user, String token) {
+        Map<String, Object> result = new HashMap<>();
+        if (token != null && !token.isBlank()) {
+            result.put("token", token);
+        }
         result.put("userId", user.getId());
         result.put("username", user.getUsername());
         result.put("fullName", user.getFullName());
         result.put("role", user.getRole());
+        result.put("mobileNumber", user.getMobileNumber());
+        result.put("address", user.getAddress());
+        result.put("hasIdProofImage", user.getIdProofImage() != null && !user.getIdProofImage().isBlank());
+        result.put("hasProfileImage", user.getProfileImage() != null && !user.getProfileImage().isBlank());
         return result;
     }
 

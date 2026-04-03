@@ -5,6 +5,10 @@ public class RegisterRequest {
     private String password;
     private String fullName;
     private String role;
+    private String mobileNumber;
+    private String address;
+    private String idProofImage;
+    private String profileImage;
 
     public String getUsername() {
         return username;
@@ -36,5 +40,37 @@ public class RegisterRequest {
 
     public void setRole(String role) {
         this.role = role;
+    }
+
+    public String getMobileNumber() {
+        return mobileNumber;
+    }
+
+    public void setMobileNumber(String mobileNumber) {
+        this.mobileNumber = mobileNumber;
+    }
+
+    public String getAddress() {
+        return address;
+    }
+
+    public void setAddress(String address) {
+        this.address = address;
+    }
+
+    public String getIdProofImage() {
+        return idProofImage;
+    }
+
+    public void setIdProofImage(String idProofImage) {
+        this.idProofImage = idProofImage;
+    }
+
+    public String getProfileImage() {
+        return profileImage;
+    }
+
+    public void setProfileImage(String profileImage) {
+        this.profileImage = profileImage;
     }
 }

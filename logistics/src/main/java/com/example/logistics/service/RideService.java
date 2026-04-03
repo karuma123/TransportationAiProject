@@ -1,6 +1,10 @@
 package com.example.logistics.service;
 
 import java.time.Instant;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HashMap;
@@ -9,8 +13,16 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
+
+import javax.crypto.Mac;
+import javax.crypto.spec.SecretKeySpec;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import com.example.logistics.dto.RideBookingRequest;
 import com.example.logistics.entity.DriverBehavior;
@@ -27,11 +39,20 @@ import com.example.logistics.repository.RideRepository;
 public class RideService {
 
     private static final Random RANDOM = new Random();
+    private static final long PAYMENT_PROCESSING_MS = 5000L;
+    private static final String RAZORPAY_API = "https://api.razorpay.com/v1/orders";
 
     private final RideRepository rideRepository;
     private final DriverBehaviorRepository driverBehaviorRepository;
     private final GpsPointRepository gpsPointRepository;
     private final DriverRouteScheduleRepository driverRouteScheduleRepository;
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @Value("${payment.razorpay.key-id:${RAZORPAY_KEY_ID:}}")
+    private String razorpayKeyId;
+
+    @Value("${payment.razorpay.key-secret:${RAZORPAY_KEY_SECRET:}}")
+    private String razorpayKeySecret;
 
     public RideService(
             RideRepository rideRepository,
@@ -385,6 +406,133 @@ public class RideService {
         return rideRepository.save(ride);
     }
 
+    public Ride initiateRealtimePayment(Long rideId, String method, Double amount, String transactionRef) {
+        Ride ride = getRideOrThrow(rideId);
+
+        if (amount == null || amount <= 0) {
+            throw new RuntimeException("Valid amount is required for payment");
+        }
+
+        String normalizedMethod = method == null || method.isBlank()
+                ? "UNKNOWN"
+                : method.trim().toUpperCase(Locale.ROOT);
+
+        ride.setAmountPaid(amount);
+        ride.setPaymentMethod(normalizedMethod);
+        ride.setPaymentTransactionRef(
+                transactionRef == null || transactionRef.isBlank()
+                        ? "PAY-" + System.currentTimeMillis()
+                        : transactionRef.trim()
+        );
+        ride.setPaymentUpdatedAt(Instant.now());
+
+        if ("CASH".equals(normalizedMethod)) {
+            ride.setPaymentStatus("SUCCESS");
+        } else {
+            ride.setPaymentStatus("PROCESSING");
+        }
+
+        return rideRepository.save(ride);
+    }
+
+    public Map<String, Object> getPaymentStatus(Long rideId) {
+        Ride ride = progressPaymentIfDue(getRideOrThrow(rideId));
+
+        Map<String, Object> status = new HashMap<>();
+        status.put("rideId", ride.getId());
+        status.put("paymentStatus", ride.getPaymentStatus());
+        status.put("paymentMethod", ride.getPaymentMethod());
+        status.put("paymentTransactionRef", ride.getPaymentTransactionRef());
+        status.put("amountPaid", ride.getAmountPaid());
+        status.put("paymentUpdatedAt", ride.getPaymentUpdatedAt());
+        return status;
+    }
+
+    public Map<String, Object> createRazorpayOrder(Long rideId, Double amount) {
+        Ride ride = getRideOrThrow(rideId);
+        ensureRazorpayConfigured();
+
+        double amountInr = amount == null || amount <= 0
+                ? (ride.getEstimatedFare() == null ? 0.0 : ride.getEstimatedFare())
+                : amount;
+        if (amountInr <= 0) {
+            throw new RuntimeException("Valid amount is required for Razorpay order");
+        }
+
+        int amountPaise = (int) Math.round(amountInr * 100);
+
+        try {
+            String auth = Base64.getEncoder().encodeToString((razorpayKeyId + ":" + razorpayKeySecret).getBytes(StandardCharsets.UTF_8));
+
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("amount", amountPaise);
+            requestBody.put("currency", "INR");
+            requestBody.put("receipt", "ride_" + rideId + "_" + System.currentTimeMillis());
+            requestBody.put("payment_capture", 1);
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(RAZORPAY_API))
+                    .header("Authorization", "Basic " + auth)
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(requestBody)))
+                    .build();
+
+            HttpResponse<String> response = HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new RuntimeException("Unable to create Razorpay order: " + response.body());
+            }
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> order = objectMapper.readValue(response.body(), Map.class);
+            String orderId = String.valueOf(order.get("id"));
+
+            ride.setPaymentMethod("RAZORPAY");
+            ride.setPaymentStatus("PENDING");
+            ride.setPaymentTransactionRef(orderId);
+            ride.setAmountPaid(0.0);
+            ride.setPaymentUpdatedAt(Instant.now());
+            rideRepository.save(ride);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("rideId", rideId);
+            result.put("orderId", orderId);
+            result.put("amountPaise", amountPaise);
+            result.put("currency", "INR");
+            result.put("keyId", razorpayKeyId);
+            return result;
+        } catch (Exception ex) {
+            throw new RuntimeException("Razorpay order creation failed: " + ex.getMessage(), ex);
+        }
+    }
+
+    public Ride verifyRazorpayPayment(Long rideId, String orderId, String paymentId, String signature, Double amount) {
+        Ride ride = getRideOrThrow(rideId);
+        ensureRazorpayConfigured();
+
+        if (orderId == null || orderId.isBlank() || paymentId == null || paymentId.isBlank() || signature == null || signature.isBlank()) {
+            throw new RuntimeException("Razorpay verification payload is incomplete");
+        }
+
+        String expectedSig = hmacSha256(orderId.trim() + "|" + paymentId.trim(), razorpayKeySecret);
+        if (!expectedSig.equals(signature.trim())) {
+            ride.setPaymentStatus("FAILED");
+            ride.setPaymentUpdatedAt(Instant.now());
+            rideRepository.save(ride);
+            throw new RuntimeException("Razorpay signature verification failed");
+        }
+
+        double amountInr = amount == null || amount <= 0
+                ? (ride.getEstimatedFare() == null ? 0.0 : ride.getEstimatedFare())
+                : amount;
+
+        ride.setAmountPaid(amountInr);
+        ride.setPaymentMethod("RAZORPAY");
+        ride.setPaymentStatus("SUCCESS");
+        ride.setPaymentTransactionRef(paymentId.trim());
+        ride.setPaymentUpdatedAt(Instant.now());
+        return rideRepository.save(ride);
+    }
+
     public Ride raiseSos(Long rideId, String message) {
         Ride ride = getRideOrThrow(rideId);
         ride.setSosActive(true);
@@ -425,7 +573,7 @@ public class RideService {
     }
 
     public Map<String, Object> getRideTracking(Long rideId) {
-        Ride ride = getRideOrThrow(rideId);
+        Ride ride = progressPaymentIfDue(getRideOrThrow(rideId));
         Map<String, Object> tracking = new HashMap<>();
         tracking.put("rideId", ride.getId());
         tracking.put("status", ride.getStatus());
@@ -447,6 +595,7 @@ public class RideService {
         tracking.put("paymentMethod", ride.getPaymentMethod());
         tracking.put("paymentTransactionRef", ride.getPaymentTransactionRef());
         tracking.put("amountPaid", ride.getAmountPaid());
+        tracking.put("paymentUpdatedAt", ride.getPaymentUpdatedAt());
         tracking.put("routeScheduleId", ride.getRouteScheduleId());
         tracking.put("sosActive", ride.getSosActive());
         tracking.put("sosMessage", ride.getSosMessage());
@@ -495,6 +644,47 @@ public class RideService {
         }
 
         return tracking;
+    }
+
+    private Ride progressPaymentIfDue(Ride ride) {
+        if (!"PROCESSING".equalsIgnoreCase(ride.getPaymentStatus())) {
+            return ride;
+        }
+
+        if (ride.getPaymentUpdatedAt() == null) {
+            return ride;
+        }
+
+        long elapsed = Instant.now().toEpochMilli() - ride.getPaymentUpdatedAt().toEpochMilli();
+        if (elapsed < PAYMENT_PROCESSING_MS) {
+            return ride;
+        }
+
+        ride.setPaymentStatus("SUCCESS");
+        ride.setPaymentUpdatedAt(Instant.now());
+        return rideRepository.save(ride);
+    }
+
+    private void ensureRazorpayConfigured() {
+        if (razorpayKeyId == null || razorpayKeyId.isBlank() || razorpayKeySecret == null || razorpayKeySecret.isBlank()) {
+            throw new RuntimeException("Razorpay is not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET.");
+        }
+    }
+
+    private String hmacSha256(String payload, String secret) {
+        try {
+            Mac sha256Hmac = Mac.getInstance("HmacSHA256");
+            SecretKeySpec secretKey = new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+            sha256Hmac.init(secretKey);
+            byte[] digest = sha256Hmac.doFinal(payload.getBytes(StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception ex) {
+            throw new RuntimeException("Unable to compute Razorpay signature", ex);
+        }
     }
 
     private String normalizeStage(String stage, RideStatus status) {

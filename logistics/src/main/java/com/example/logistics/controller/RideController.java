@@ -22,7 +22,7 @@ import com.example.logistics.entity.DriverRouteSchedule;
 import com.example.logistics.entity.Ride;
 import com.example.logistics.service.RideService;
 
-@CrossOrigin(origins = "http://localhost:3000")
+@CrossOrigin(origins = "*")
 @RestController
 @RequestMapping("/api/rides")
 public class RideController {
@@ -153,6 +153,43 @@ public class RideController {
             amount = ((Number) payload.get("amount")).doubleValue();
         }
         return rideService.markPayment(rideId, method, amount, transactionRef);
+    }
+
+    @PostMapping("/{rideId}/payment/initiate")
+    public Ride initiateRealtimePayment(@PathVariable Long rideId, @RequestBody(required = false) Map<String, Object> payload) {
+        String method = payload == null ? null : (String) payload.get("method");
+        String transactionRef = payload == null ? null : (String) payload.get("transactionRef");
+        Double amount = null;
+        if (payload != null && payload.get("amount") != null) {
+            amount = ((Number) payload.get("amount")).doubleValue();
+        }
+        return rideService.initiateRealtimePayment(rideId, method, amount, transactionRef);
+    }
+
+    @GetMapping("/{rideId}/payment/status")
+    public Map<String, Object> paymentStatus(@PathVariable Long rideId) {
+        return rideService.getPaymentStatus(rideId);
+    }
+
+    @PostMapping("/{rideId}/payment/razorpay/order")
+    public Map<String, Object> createRazorpayOrder(@PathVariable Long rideId, @RequestBody(required = false) Map<String, Object> payload) {
+        Double amount = null;
+        if (payload != null && payload.get("amount") != null) {
+            amount = ((Number) payload.get("amount")).doubleValue();
+        }
+        return rideService.createRazorpayOrder(rideId, amount);
+    }
+
+    @PostMapping("/{rideId}/payment/razorpay/verify")
+    public Ride verifyRazorpayPayment(@PathVariable Long rideId, @RequestBody Map<String, Object> payload) {
+        String orderId = payload == null ? null : (String) payload.get("razorpay_order_id");
+        String paymentId = payload == null ? null : (String) payload.get("razorpay_payment_id");
+        String signature = payload == null ? null : (String) payload.get("razorpay_signature");
+        Double amount = null;
+        if (payload != null && payload.get("amount") != null) {
+            amount = ((Number) payload.get("amount")).doubleValue();
+        }
+        return rideService.verifyRazorpayPayment(rideId, orderId, paymentId, signature, amount);
     }
 
     @PostMapping("/{rideId}/sos")

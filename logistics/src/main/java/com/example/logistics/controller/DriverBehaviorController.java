@@ -20,7 +20,7 @@ import org.springframework.web.multipart.MultipartFile;
 import com.example.logistics.entity.DriverBehavior;
 import com.example.logistics.service.DriverBehaviorService;
 
-@CrossOrigin(origins = "http://localhost:3000")
+@CrossOrigin(origins = "*")
 @RestController
 @RequestMapping("/api/drivers")
 public class DriverBehaviorController {

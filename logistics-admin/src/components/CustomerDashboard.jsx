@@ -14,6 +14,18 @@ const fmtDate = (value) => (value ? new Date(value).toLocaleString() : "-");
 const fmtDistance = (value) => (value ? `${value} km` : "-");
 const fmtEta = (value) => (value ? `${value} mins` : "Calculating");
 
+const loadRazorpayCheckout = () => new Promise((resolve) => {
+  if (window.Razorpay) {
+    resolve(true);
+    return;
+  }
+  const script = document.createElement("script");
+  script.src = "https://checkout.razorpay.com/v1/checkout.js";
+  script.onload = () => resolve(true);
+  script.onerror = () => resolve(false);
+  document.body.appendChild(script);
+});
+
 const readApiError = (error, fallback) => {
   const status = error?.response?.status;
   const data = error?.response?.data;
@@ -89,6 +101,7 @@ const LocationPicker = ({ onDropPick }) => {
 const CustomerDashboard = () => {
   const navigate = useNavigate();
   const session = getSession();
+  const [profileImages, setProfileImages] = useState({ idProofImage: "", profileImage: "" });
   const [rides, setRides] = useState([]);
   const [message, setMessage] = useState("");
   const [pickupPoint, setPickupPoint] = useState(defaultPickup);
@@ -104,6 +117,10 @@ const CustomerDashboard = () => {
   const [searchedSchedules, setSearchedSchedules] = useState(false);
   const [pickupSuggestions, setPickupSuggestions] = useState([]);
   const [dropSuggestions, setDropSuggestions] = useState([]);
+  const [pickupInputFocused, setPickupInputFocused] = useState(false);
+  const [dropInputFocused, setDropInputFocused] = useState(false);
+  const [suppressNextPickupLookup, setSuppressNextPickupLookup] = useState(false);
+  const [suppressNextDropLookup, setSuppressNextDropLookup] = useState(false);
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [form, setForm] = useState({
     pickupLocation: defaultPickup.label,
@@ -115,6 +132,7 @@ const CustomerDashboard = () => {
     estimatedFare: "",
   });
   const [paymentForm, setPaymentForm] = useState({ method: "UPI", amount: "", transactionRef: "" });
+  const [paymentUiError, setPaymentUiError] = useState("");
   const [shipmentForm, setShipmentForm] = useState({ stage: "IN_TRANSIT", note: "" });
   const [sosMessage, setSosMessage] = useState("I need urgent support for this shipment.");
   const [feedbackForm, setFeedbackForm] = useState({ rating: 5, feedback: "" });
@@ -134,6 +152,8 @@ const CustomerDashboard = () => {
   };
 
   const liveRide = rides.find((r) => r.id === selectedRideId);
+  const effectivePaymentStatus = tracking?.paymentStatus || liveRide?.paymentStatus || "PENDING";
+  const usesGatewayCheckout = paymentForm.method !== "CASH";
   const showPickupPin = Boolean(
     tracking?.pickupPin
     && !tracking?.pickupVerified
@@ -193,6 +213,23 @@ const CustomerDashboard = () => {
   }, [load]);
 
   useEffect(() => {
+    const loadProfileImages = async () => {
+      if (!session?.token) return;
+      try {
+        const res = await axios.get(`${API}/auth/profile/images`, { headers: getAuthHeaders() });
+        setProfileImages({
+          idProofImage: res.data?.idProofImage || "",
+          profileImage: res.data?.profileImage || "",
+        });
+      } catch {
+        setProfileImages({ idProofImage: "", profileImage: "" });
+      }
+    };
+
+    loadProfileImages();
+  }, [session?.token]);
+
+  useEffect(() => {
     loadTracking(selectedRideId);
     const timer = setInterval(() => loadTracking(selectedRideId), 4000);
     return () => clearInterval(timer);
@@ -220,14 +257,22 @@ const CustomerDashboard = () => {
   }, [tracking, selectedRideId]);
 
   useEffect(() => {
+    if (suppressNextPickupLookup) {
+      setSuppressNextPickupLookup(false);
+      return;
+    }
     const timer = setTimeout(async () => setPickupSuggestions(await fetchLocationSuggestions(form.pickupLocation)), 300);
     return () => clearTimeout(timer);
-  }, [form.pickupLocation]);
+  }, [form.pickupLocation, suppressNextPickupLookup]);
 
   useEffect(() => {
+    if (suppressNextDropLookup) {
+      setSuppressNextDropLookup(false);
+      return;
+    }
     const timer = setTimeout(async () => setDropSuggestions(await fetchLocationSuggestions(form.dropLocation)), 300);
     return () => clearTimeout(timer);
-  }, [form.dropLocation]);
+  }, [form.dropLocation, suppressNextDropLookup]);
 
   const useCurrentLocation = () => {
     if (!navigator.geolocation) {
@@ -241,7 +286,9 @@ const CustomerDashboard = () => {
         const lng = position.coords.longitude;
         const label = await reverseGeocode(lat, lng);
         setPickupPoint({ lat, lng, label });
+        setSuppressNextPickupLookup(true);
         setForm((prev) => ({ ...prev, pickupLocation: label }));
+        setPickupSuggestions([]);
       },
       () => setMessage("Unable to fetch current location")
     );
@@ -250,7 +297,9 @@ const CustomerDashboard = () => {
   const handleDropPick = async (lat, lng) => {
     const label = await reverseGeocode(lat, lng);
     setDropPoint({ lat, lng, label });
+    setSuppressNextDropLookup(true);
     setForm((prev) => ({ ...prev, dropLocation: label }));
+    setDropSuggestions([]);
   };
 
   const book = async () => {
@@ -351,13 +400,118 @@ const CustomerDashboard = () => {
   );
 
   const processPayment = async () => runRideAction(
-    () => axios.post(`${API}/rides/${selectedRideId}/payment`, {
+    () => axios.post(`${API}/rides/${selectedRideId}/payment/initiate`, {
       method: paymentForm.method,
       amount: paymentForm.amount ? Number(paymentForm.amount) : Number(liveRide?.estimatedFare || 0),
       transactionRef: paymentForm.transactionRef || `SIM-${Date.now()}`,
     }, { headers: getAuthHeaders() }),
-    "Payment marked successful"
+    "Cash payment marked successfully"
   );
+
+  const processRazorpayPayment = async () => {
+    setPaymentUiError("");
+    if (!selectedRideId) {
+      setMessage("Select a ride first");
+      return;
+    }
+
+    const amount = paymentForm.amount ? Number(paymentForm.amount) : Number(liveRide?.estimatedFare || 0);
+    if (!amount || amount <= 0) {
+      setMessage("Enter a valid amount for payment");
+      return;
+    }
+
+    setActionBusy(true);
+    try {
+      const sdkLoaded = await loadRazorpayCheckout();
+      if (!sdkLoaded || !window.Razorpay) {
+        throw new Error("Unable to load Razorpay checkout");
+      }
+
+      const orderRes = await axios.post(
+        `${API}/rides/${selectedRideId}/payment/razorpay/order`,
+        { amount },
+        { headers: getAuthHeaders() }
+      );
+
+      const options = {
+        key: orderRes.data.keyId,
+        amount: orderRes.data.amountPaise,
+        currency: orderRes.data.currency || "INR",
+        name: "Logistics Live Payments",
+        description: `Ride #${selectedRideId} Payment`,
+        order_id: orderRes.data.orderId,
+        prefill: {
+          name: session?.fullName || "Customer",
+          contact: session?.mobileNumber || "",
+        },
+        method: {
+          upi: paymentForm.method === "UPI" || paymentForm.method === "RAZORPAY",
+          card: paymentForm.method === "CARD" || paymentForm.method === "RAZORPAY",
+          netbanking: paymentForm.method === "NETBANKING" || paymentForm.method === "RAZORPAY",
+          wallet: paymentForm.method === "RAZORPAY",
+          emi: false,
+          paylater: false,
+        },
+        handler: async (response) => {
+          await axios.post(
+            `${API}/rides/${selectedRideId}/payment/razorpay/verify`,
+            {
+              razorpay_order_id: response.razorpay_order_id,
+              razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_signature: response.razorpay_signature,
+              amount,
+            },
+            { headers: getAuthHeaders() }
+          );
+          setMessage("Razorpay payment successful");
+          await Promise.all([load(), loadTracking(selectedRideId)]);
+        },
+        modal: {
+          ondismiss: () => {
+            setMessage("Payment cancelled by user");
+            setPaymentUiError("Payment window closed before completion.");
+          },
+        },
+        theme: {
+          color: "#0f6cbd",
+        },
+      };
+
+      const rz = new window.Razorpay(options);
+      rz.open();
+    } catch (error) {
+      const friendly = readApiError(error, "Razorpay payment failed");
+      setMessage(friendly);
+      setPaymentUiError(friendly);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const refreshPaymentStatus = useCallback(async () => {
+    if (!selectedRideId) {
+      setMessage("Select a ride first");
+      return;
+    }
+    try {
+      await axios.get(`${API}/rides/${selectedRideId}/payment/status`, { headers: getAuthHeaders() });
+      await loadTracking(selectedRideId);
+    } catch (error) {
+      setMessage(readApiError(error, "Unable to refresh payment status"));
+    }
+  }, [selectedRideId, loadTracking]);
+
+  useEffect(() => {
+    if (!selectedRideId) return;
+    if (effectivePaymentStatus !== "PROCESSING") return;
+
+    const timer = setInterval(() => {
+      refreshPaymentStatus();
+    }, 2000);
+
+    return () => clearInterval(timer);
+  }, [selectedRideId, effectivePaymentStatus, refreshPaymentStatus]);
 
   const raiseSos = async () => runRideAction(
     () => axios.post(`${API}/rides/${selectedRideId}/sos`, { message: sosMessage }, { headers: getAuthHeaders() }),
@@ -392,7 +546,15 @@ const CustomerDashboard = () => {
   const renderSuggestions = (items, onSelect) => items.length > 0 && (
     <div className="location-suggestions">
       {items.map((item, idx) => (
-        <button key={`${item.label}-${idx}`} type="button" className="location-suggestion-item" onClick={() => onSelect(item)}>
+        <button
+          key={`${item.label}-${idx}`}
+          type="button"
+          className="location-suggestion-item"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            onSelect(item);
+          }}
+        >
           {item.label}
         </button>
       ))}
@@ -409,6 +571,7 @@ const CustomerDashboard = () => {
             <p className="role-subtitle">Plan bookings, monitor active deliveries, and manage payment, support, and feedback from one clear workspace.</p>
             <div className="role-topbar-meta">
               <span className="role-meta-chip">Customer ID: {session?.userId || "-"}</span>
+              <span className="role-meta-chip">Name: {session?.fullName || "-"}</span>
               <span className="role-meta-chip">Live rides: {rideKpis.live}</span>
               <span className="role-meta-chip">Completed deliveries: {rideKpis.completed}</span>
             </div>
@@ -419,6 +582,16 @@ const CustomerDashboard = () => {
               <p className="role-command-label">Control Center</p>
               <h2>Shipment command panel</h2>
               <p>Keep bookings moving, review the freshest route status, and jump into urgent actions without hunting through tables.</p>
+            </div>
+            <div className="role-profile-card">
+              <div className="role-profile-details">
+                <p className="role-profile-title">Customer Profile</p>
+                <p className="role-profile-item"><strong>Mobile:</strong> {session?.mobileNumber || "-"}</p>
+                <p className="role-profile-item"><strong>Address:</strong> {session?.address || "-"}</p>
+                <p className="role-profile-item"><strong>ID Proof:</strong> {profileImages?.idProofImage ? "Uploaded" : "Not uploaded"}</p>
+              </div>
+              {(profileImages?.profileImage || profileImages?.idProofImage)
+                && <img src={profileImages?.profileImage || profileImages?.idProofImage} alt="Customer Profile" className="role-profile-image" />}
             </div>
             <div className="role-command-actions">
               <button className="role-btn role-btn-secondary" type="button" onClick={useCurrentLocation}>Use Current Location</button>
@@ -454,8 +627,15 @@ const CustomerDashboard = () => {
             <div className="role-grid-2">
               <div className="role-field location-autocomplete">
                 <label>Pickup location</label>
-                <input value={form.pickupLocation} onChange={(e) => setForm({ ...form, pickupLocation: e.target.value })} placeholder="Pickup location name" />
-                {form.pickupLocation.trim().length >= 3 && renderSuggestions(pickupSuggestions, (s) => {
+                <input
+                  value={form.pickupLocation}
+                  onFocus={() => setPickupInputFocused(true)}
+                  onBlur={() => setTimeout(() => setPickupInputFocused(false), 120)}
+                  onChange={(e) => setForm({ ...form, pickupLocation: e.target.value })}
+                  placeholder="Pickup location name"
+                />
+                {pickupInputFocused && form.pickupLocation.trim().length >= 3 && renderSuggestions(pickupSuggestions, (s) => {
+                  setSuppressNextPickupLookup(true);
                   setForm((prev) => ({ ...prev, pickupLocation: s.label }));
                   setPickupPoint({ lat: s.lat, lng: s.lng, label: s.label });
                   setPickupSuggestions([]);
@@ -463,8 +643,15 @@ const CustomerDashboard = () => {
               </div>
               <div className="role-field location-autocomplete">
                 <label>Drop location</label>
-                <input value={form.dropLocation} onChange={(e) => setForm({ ...form, dropLocation: e.target.value })} placeholder="Drop location name" />
-                {form.dropLocation.trim().length >= 3 && renderSuggestions(dropSuggestions, (s) => {
+                <input
+                  value={form.dropLocation}
+                  onFocus={() => setDropInputFocused(true)}
+                  onBlur={() => setTimeout(() => setDropInputFocused(false), 120)}
+                  onChange={(e) => setForm({ ...form, dropLocation: e.target.value })}
+                  placeholder="Drop location name"
+                />
+                {dropInputFocused && form.dropLocation.trim().length >= 3 && renderSuggestions(dropSuggestions, (s) => {
+                  setSuppressNextDropLookup(true);
                   setForm((prev) => ({ ...prev, dropLocation: s.label }));
                   setDropPoint({ lat: s.lat, lng: s.lng, label: s.label });
                   setDropSuggestions([]);
@@ -528,7 +715,7 @@ const CustomerDashboard = () => {
               <div className="role-panel-header"><div><h3>Tracking focus</h3><p className="role-card-subtitle">Stay aligned on the currently selected ride and intervene quickly when something changes.</p></div></div>
               <div className="role-status-row">
                 <span className="role-chip">Selected ride: {selectedRideId || "None"}</span>
-                <span className="role-chip">Payment: {tracking?.paymentStatus || liveRide?.paymentStatus || "PENDING"}</span>
+                <span className="role-chip">Payment: {effectivePaymentStatus}</span>
                 <span className={`role-chip ${tracking?.sosActive ? "alert" : ""}`}>SOS: {tracking?.sosActive ? "Active" : "Normal"}</span>
               </div>
               <div className="role-inline-note" style={{ marginTop: 14 }}>Choose a ride from the table below to unlock live route ETA, package location, payment, support, and feedback controls.</div>
@@ -574,7 +761,7 @@ const CustomerDashboard = () => {
                   <div className="role-metric"><div>ETA</div><strong>{fmtEta(routeMeta.etaMin || tracking?.etaMinutes)}</strong></div>
                   <div className="role-metric"><div>Route Distance</div><strong>{fmtDistance(routeMeta.distanceKm || tracking?.distanceToDropKm)}</strong></div>
                   <div className="role-metric"><div>Package Location</div><strong>{packageLocationText}</strong></div>
-                  <div className="role-metric"><div>Payment Status</div><strong>{tracking?.paymentStatus || "PENDING"}</strong></div>
+                  <div className="role-metric"><div>Payment Status</div><strong>{effectivePaymentStatus}</strong></div>
                   <div className="role-metric"><div>SOS Status</div><strong>{tracking?.sosActive ? "ACTIVE" : "NORMAL"}</strong></div>
                 </div>
                 <div className="ride-map-box">
@@ -604,17 +791,29 @@ const CustomerDashboard = () => {
             </div>
 
             <div className="role-card">
-              <div className="role-panel-header"><div><h3>Payment and support</h3><p className="role-card-subtitle">Capture simulated payment status and escalate urgent support issues when required.</p></div></div>
+              <div className="role-panel-header"><div><h3>Payment and support</h3><p className="role-card-subtitle">Initiate payments and watch status update in real-time while it is being processed.</p></div></div>
               <div className="role-grid-2">
                 <div>
                   <div className="role-field"><label>Payment method</label>
                     <select value={paymentForm.method} onChange={(e) => setPaymentForm((prev) => ({ ...prev, method: e.target.value }))} disabled={actionBusy}>
-                      <option value="UPI">UPI</option><option value="CARD">CARD</option><option value="NETBANKING">NETBANKING</option><option value="CASH">CASH</option>
+                      <option value="UPI">UPI</option><option value="CARD">CARD</option><option value="NETBANKING">NETBANKING</option><option value="CASH">CASH</option><option value="RAZORPAY">RAZORPAY</option>
                     </select>
                   </div>
                   <div className="role-field"><label>Amount</label><input type="number" placeholder="Amount" value={paymentForm.amount} onChange={(e) => setPaymentForm((prev) => ({ ...prev, amount: e.target.value }))} /></div>
                   <div className="role-field"><label>Transaction reference</label><input placeholder="Transaction Ref (optional)" value={paymentForm.transactionRef} onChange={(e) => setPaymentForm((prev) => ({ ...prev, transactionRef: e.target.value }))} /></div>
-                  <button disabled={actionBusy} onClick={processPayment}>Mark Payment Successful</button>
+                  <div className="role-inline-note" style={{ marginBottom: 8 }}>Current: {effectivePaymentStatus} {tracking?.paymentTransactionRef ? `| Ref: ${tracking.paymentTransactionRef}` : ""}</div>
+                  {paymentUiError && <div className="role-message" style={{ marginTop: 0, marginBottom: 8 }}>{paymentUiError}</div>}
+                  <div className="role-panel-actions">
+                    <button
+                      disabled={actionBusy || effectivePaymentStatus === "SUCCESS"}
+                      onClick={usesGatewayCheckout ? processRazorpayPayment : processPayment}
+                    >
+                      {effectivePaymentStatus === "PROCESSING"
+                        ? "Payment Processing..."
+                        : (usesGatewayCheckout ? `Pay with ${paymentForm.method === "RAZORPAY" ? "Razorpay" : paymentForm.method}` : "Pay Cash")}
+                    </button>
+                    <button className="role-btn-secondary" type="button" disabled={actionBusy || !selectedRideId} onClick={refreshPaymentStatus}>Refresh Payment Status</button>
+                  </div>
                 </div>
                 <div>
                   <div className="role-field"><label>SOS message</label><textarea value={sosMessage} onChange={(e) => setSosMessage(e.target.value)} placeholder="Describe emergency or support issue" /></div>

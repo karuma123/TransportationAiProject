@@ -32,6 +32,17 @@ const fetchLocationSuggestions = async (query) => {
   }
 };
 
+const reverseGeocode = async (lat, lng) => {
+  try {
+    const res = await axios.get("https://nominatim.openstreetmap.org/reverse", {
+      params: { lat, lon: lng, format: "jsonv2", "accept-language": "en" },
+    });
+    return res.data?.display_name || `${lat.toFixed(5)},${lng.toFixed(5)}`;
+  } catch {
+    return `${lat.toFixed(5)},${lng.toFixed(5)}`;
+  }
+};
+
 const readApiError = (error, fallback) => {
   const status = error?.response?.status;
   const data = error?.response?.data;
@@ -50,6 +61,7 @@ L.Icon.Default.mergeOptions({
 const DriverDashboard = () => {
   const navigate = useNavigate();
   const session = getSession();
+  const [profileImages, setProfileImages] = useState({ idProofImage: "", profileImage: "" });
   const [liveRides, setLiveRides] = useState([]);
   const [myRides, setMyRides] = useState([]);
   const [pins, setPins] = useState({});
@@ -63,6 +75,10 @@ const DriverDashboard = () => {
   const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
   const [fromSuggestions, setFromSuggestions] = useState([]);
   const [toSuggestions, setToSuggestions] = useState([]);
+  const [fromInputFocused, setFromInputFocused] = useState(false);
+  const [toInputFocused, setToInputFocused] = useState(false);
+  const [suppressNextFromLookup, setSuppressNextFromLookup] = useState(false);
+  const [suppressNextToLookup, setSuppressNextToLookup] = useState(false);
 
   const assignedKpis = {
     queue: myRides.filter((r) => r.status === "ACCEPTED").length,
@@ -119,20 +135,64 @@ const DriverDashboard = () => {
   }, [load]);
 
   useEffect(() => {
+    const loadProfileImages = async () => {
+      if (!session?.token) return;
+      try {
+        const res = await axios.get(`${API}/auth/profile/images`, { headers: getAuthHeaders() });
+        setProfileImages({
+          idProofImage: res.data?.idProofImage || "",
+          profileImage: res.data?.profileImage || "",
+        });
+      } catch {
+        setProfileImages({ idProofImage: "", profileImage: "" });
+      }
+    };
+
+    loadProfileImages();
+  }, [session?.token]);
+
+  useEffect(() => {
     loadTracking(selectedRideId);
     const timer = setInterval(() => loadTracking(selectedRideId), 4000);
     return () => clearInterval(timer);
   }, [selectedRideId, loadTracking]);
 
   useEffect(() => {
+    if (suppressNextFromLookup) {
+      setSuppressNextFromLookup(false);
+      return;
+    }
     const timer = setTimeout(async () => setFromSuggestions(await fetchLocationSuggestions(scheduleForm.fromLocation)), 300);
     return () => clearTimeout(timer);
-  }, [scheduleForm.fromLocation]);
+  }, [scheduleForm.fromLocation, suppressNextFromLookup]);
 
   useEffect(() => {
+    if (suppressNextToLookup) {
+      setSuppressNextToLookup(false);
+      return;
+    }
     const timer = setTimeout(async () => setToSuggestions(await fetchLocationSuggestions(scheduleForm.toLocation)), 300);
     return () => clearTimeout(timer);
-  }, [scheduleForm.toLocation]);
+  }, [scheduleForm.toLocation, suppressNextToLookup]);
+
+  const useCurrentLocationForFrom = () => {
+    if (!navigator.geolocation) {
+      setMessage("Geolocation is not supported on this browser");
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const lat = position.coords.latitude;
+        const lng = position.coords.longitude;
+        const label = await reverseGeocode(lat, lng);
+        setSuppressNextFromLookup(true);
+        setScheduleForm((prev) => ({ ...prev, fromLocation: label }));
+        setFromSuggestions([]);
+      },
+      () => setMessage("Unable to fetch current location")
+    );
+  };
 
   const doAction = async (rideId, action) => {
     try {
@@ -248,7 +308,15 @@ const DriverDashboard = () => {
   const renderSuggestions = (items, onSelect) => items.length > 0 && (
     <div className="location-suggestions">
       {items.map((item, idx) => (
-        <button key={`${item.label}-${idx}`} type="button" className="location-suggestion-item" onClick={() => onSelect(item)}>
+        <button
+          key={`${item.label}-${idx}`}
+          type="button"
+          className="location-suggestion-item"
+          onMouseDown={(e) => {
+            e.preventDefault();
+            onSelect(item);
+          }}
+        >
           {item.label}
         </button>
       ))}
@@ -265,6 +333,7 @@ const DriverDashboard = () => {
             <p className="role-subtitle">Manage route schedules, accept incoming work, and track pickup-to-drop execution with a cleaner operational flow.</p>
             <div className="role-topbar-meta">
               <span className="role-meta-chip">Driver ID: {session?.userId || "-"}</span>
+              <span className="role-meta-chip">Name: {session?.fullName || "-"}</span>
               <span className="role-meta-chip">Open jobs: {liveRides.length}</span>
               <span className="role-meta-chip">In progress: {assignedKpis.inProgress}</span>
             </div>
@@ -276,8 +345,19 @@ const DriverDashboard = () => {
               <h2>Route and fulfilment command</h2>
               <p>See available jobs, publish schedule capacity, and move active rides through pickup and delivery with fewer clicks.</p>
             </div>
+            <div className="role-profile-card">
+              <div className="role-profile-details">
+                <p className="role-profile-title">Driver Profile</p>
+                <p className="role-profile-item"><strong>Mobile:</strong> {session?.mobileNumber || "-"}</p>
+                <p className="role-profile-item"><strong>Address:</strong> {session?.address || "-"}</p>
+                <p className="role-profile-item"><strong>ID Proof:</strong> {profileImages?.idProofImage ? "Uploaded" : "Not uploaded"}</p>
+              </div>
+              {(profileImages?.profileImage || profileImages?.idProofImage)
+                && <img src={profileImages?.profileImage || profileImages?.idProofImage} alt="Driver Profile" className="role-profile-image" />}
+            </div>
             <div className="role-command-actions">
               <button className="role-btn" type="button" onClick={createSchedule}>Publish Schedule</button>
+              <button className="role-btn role-btn-secondary" type="button" onClick={useCurrentLocationForFrom}>Use Current Location</button>
               <button className="role-btn role-btn-secondary" type="button" onClick={load}>Refresh Workspace</button>
               <button className="role-btn role-btn-danger" onClick={() => { clearSession(); navigate("/auth/login"); }}>Logout</button>
             </div>
@@ -307,16 +387,30 @@ const DriverDashboard = () => {
             <div className="role-grid-2">
               <div className="role-field location-autocomplete">
                 <label>From location</label>
-                <input value={scheduleForm.fromLocation} onChange={(e) => setScheduleForm((prev) => ({ ...prev, fromLocation: e.target.value }))} placeholder="From location" />
-                {scheduleForm.fromLocation.trim().length >= 3 && renderSuggestions(fromSuggestions, (s) => {
+                <input
+                  value={scheduleForm.fromLocation}
+                  onFocus={() => setFromInputFocused(true)}
+                  onBlur={() => setTimeout(() => setFromInputFocused(false), 120)}
+                  onChange={(e) => setScheduleForm((prev) => ({ ...prev, fromLocation: e.target.value }))}
+                  placeholder="From location"
+                />
+                {fromInputFocused && scheduleForm.fromLocation.trim().length >= 3 && renderSuggestions(fromSuggestions, (s) => {
+                  setSuppressNextFromLookup(true);
                   setScheduleForm((prev) => ({ ...prev, fromLocation: s.label }));
                   setFromSuggestions([]);
                 })}
               </div>
               <div className="role-field location-autocomplete">
                 <label>To location</label>
-                <input value={scheduleForm.toLocation} onChange={(e) => setScheduleForm((prev) => ({ ...prev, toLocation: e.target.value }))} placeholder="To location" />
-                {scheduleForm.toLocation.trim().length >= 3 && renderSuggestions(toSuggestions, (s) => {
+                <input
+                  value={scheduleForm.toLocation}
+                  onFocus={() => setToInputFocused(true)}
+                  onBlur={() => setTimeout(() => setToInputFocused(false), 120)}
+                  onChange={(e) => setScheduleForm((prev) => ({ ...prev, toLocation: e.target.value }))}
+                  placeholder="To location"
+                />
+                {toInputFocused && scheduleForm.toLocation.trim().length >= 3 && renderSuggestions(toSuggestions, (s) => {
+                  setSuppressNextToLookup(true);
                   setScheduleForm((prev) => ({ ...prev, toLocation: s.label }));
                   setToSuggestions([]);
                 })}

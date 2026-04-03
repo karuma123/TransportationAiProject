@@ -6,6 +6,7 @@ import java.util.Optional;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -23,6 +24,9 @@ public class DriverBehaviorService {
     private final DriverBehaviorRepository repository;
     private final RestTemplate restTemplate = new RestTemplate();
 
+    @Value("${ML_PREDICT_URL:http://localhost:5001/predict}")
+    private String mlPredictUrl;
+
     public DriverBehaviorService(DriverBehaviorRepository repository) {
         this.repository = repository;
     }
@@ -39,7 +43,7 @@ public class DriverBehaviorService {
     // ✅ ML-based GPS trajectory processing
   public DriverBehavior processGpsTrajectory(int driverId, String pltFilePath) {
 
-        String mlUrl = "http://localhost:5001/predict";
+        String mlUrl = mlPredictUrl;
 
         logger.info("Processing GPS trajectory for driver {} with file: {}", driverId, pltFilePath);
 

@@ -22,9 +22,19 @@ const LoginPage = () => {
     event.preventDefault();
     try {
       const res = await axios.post(`${API}/auth/login`, form);
-      saveSession(res.data);
-      if (res.data.role === "CUSTOMER") navigate("/customer/dashboard");
-      else if (res.data.role === "DRIVER") navigate("/driver/dashboard");
+      let session = res.data;
+      try {
+        const profileRes = await axios.get(`${API}/auth/profile`, {
+          headers: { Authorization: `Bearer ${res.data.token}` },
+        });
+        session = { ...res.data, ...profileRes.data };
+      } catch {
+        // Continue with login response data if profile endpoint is unavailable.
+      }
+
+      saveSession(session);
+      if (session.role === "CUSTOMER") navigate("/customer/dashboard");
+      else if (session.role === "DRIVER") navigate("/driver/dashboard");
       else navigate("/admin/rides");
     } catch (error) {
       setMessage(readError(error, "Sign in failed"));

@@ -144,7 +144,8 @@
 }
 
 .auth-form input,
-.auth-form select {
+.auth-form select,
+.auth-form textarea {
   width: 100%;
   border: 1px solid #cbd5e1;
   border-radius: 12px;
@@ -157,11 +158,70 @@
 }
 
 .auth-form input:focus,
-.auth-form select:focus {
+.auth-form select:focus,
+.auth-form textarea:focus {
   outline: none;
   border-color: var(--auth-primary);
   box-shadow: 0 0 0 3px rgba(15, 118, 110, 0.18);
   background: #ffffff;
+}
+
+.auth-form textarea {
+  resize: vertical;
+  min-height: 88px;
+}
+
+.auth-id-preview {
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #ffffff;
+  margin-top: 8px;
+}
+
+.auth-camera-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.auth-camera-actions .auth-submit-btn {
+  margin-top: 0;
+  width: auto;
+  min-width: 160px;
+}
+
+.auth-camera-retake {
+  background: linear-gradient(135deg, #64748b, #334155);
+}
+
+.auth-camera-panel {
+  margin-top: 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 10px;
+}
+
+.auth-camera-video {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid #dbe5ee;
+  background: #0f172a;
+  max-height: 320px;
+  object-fit: cover;
+}
+
+.auth-camera-controls {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.auth-camera-controls .auth-submit-btn {
+  margin-top: 0;
 }
 
 .auth-submit-btn {
